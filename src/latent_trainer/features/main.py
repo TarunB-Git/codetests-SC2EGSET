@@ -18,10 +18,12 @@ from latent_trainer.settings import DATA_DIR, LOGGING_FORMAT, SEED
 )
 @click.option(
     "--transform",
-    type=TransformEnumFunction(["rich", "averaged_economy"]),
+    type=TransformEnumFunction(
+        ["rich", "averaged_economy", "historical_averaged_economy"]
+    ),
     default="rich",
     show_default=True,
-    help="Transform to use: 'rich' (temporal+meta+units, 204 features) or 'averaged_economy' (averaged economy, 39 features)",
+    help="Transform to use: rich, averaged_economy, or historical_averaged_economy",
 )
 @click.option(
     "--single_json_dataset_path",

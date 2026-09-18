@@ -25,6 +25,7 @@ dependencies = [
     "tensorboardx>=2.6.4",
     "umap-learn>=0.5.12",
     "shap>=0.51.0",
+    "xgboost>=3.2.0",
 ]
 
 [dependency-groups]

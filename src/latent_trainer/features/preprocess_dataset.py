@@ -31,13 +31,14 @@ from sc2_datasets.lightning.sc2_egset_datamodule import (
     SC2EGSetDataModuleSingleJSON,
 )
 from sc2_datasets.replay_data.sc2_replay_data import SC2ReplayData
-from sc2_datasets.transforms.pytorch.economy_vs_outcome import (
-    economy_average_vs_outcome,
-)
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from tqdm import tqdm
 
+from latent_trainer.benchmarks.transforms.aligned_economy import (
+    economy_average_players_vs_outcomes,
+    historical_economy_average_players_vs_outcomes,
+)
 from latent_trainer.features.rich_transform import rich_transform
 from latent_trainer.features.type import CachedDatasetFileSpec
 from latent_trainer.settings import DATA_DIR
@@ -171,8 +172,8 @@ def process_set(
 
 def process_replay(
     replay: SC2ReplayData,
-    transform_fn: Callable[[SC2ReplayData], tuple[torch.Tensor, int]],
-) -> tuple[torch.Tensor, torch.Tensor] | None:
+    transform_fn: Callable[[SC2ReplayData], tuple[torch.Tensor, int | torch.Tensor]],
+) -> tuple[torch.Tensor, int | torch.Tensor] | None:
     """Apply transform and return (features, label) or None."""
     # Rich transform takes the raw replay directly
     result = transform_fn(replay)
@@ -185,10 +186,15 @@ def process_replay(
     if features is None or label is None:
         return None
 
-    if label == -1:  # Undecided/Draw/Tie
+    label_tensor = torch.as_tensor(label)
+    if torch.any(label_tensor == -1).item():
         return None
 
     return features, label
+
+
+def stack_labels(labels: list) -> torch.Tensor:
+    return torch.stack([torch.as_tensor(label, dtype=torch.long) for label in labels])
 
 
 def check_split(
@@ -314,11 +320,11 @@ def preprocess_dataset(
     logging.info("\n[3/3] Saving cached dataset...")
 
     train_features_tensor = torch.stack(train_features)
-    train_labels_tensor = torch.tensor(train_labels, dtype=torch.long)
+    train_labels_tensor = stack_labels(train_labels)
     test_features_tensor = torch.stack(test_features)
-    test_labels_tensor = torch.tensor(test_labels, dtype=torch.long)
+    test_labels_tensor = stack_labels(test_labels)
     val_features_tensor = torch.stack(val_features)
-    val_labels_tensor = torch.tensor(val_labels, dtype=torch.long)
+    val_labels_tensor = stack_labels(val_labels)
 
     # Fill in missing samples up to the correct split using the test set since
     # it is the least critical for training:
@@ -393,7 +399,8 @@ class TransformEnumFunction(click.Choice):
 
     _TRANSFORM_NAMES: dict[Callable, str] = {
         rich_transform: "rich",
-        economy_average_vs_outcome: "averaged_economy",
+        economy_average_players_vs_outcomes: "averaged_economy",
+        historical_economy_average_players_vs_outcomes: "historical_averaged_economy",
     }
 
     def convert(self, value, param, ctx):
@@ -401,7 +408,9 @@ class TransformEnumFunction(click.Choice):
             case "rich":
                 return rich_transform
             case "averaged_economy":
-                return economy_average_vs_outcome
+                return economy_average_players_vs_outcomes
+            case "historical_averaged_economy":
+                return historical_economy_average_players_vs_outcomes
             case _:
                 raise click.BadParameter(f"Invalid transform choice: {value}")
 
@@ -588,14 +597,16 @@ def preprocess_dataset_test_only(
         offset += len(batch)
 
         test_dataset.indices = sorted(batch)
-        batch_features, batch_labels, batch_skipped, batch_errors = process_set_chunked_single_pool(
-            dataset_object=test_dataset,
-            executor=ProcessPoolExecutor if n_workers > 1 else ThreadPoolExecutor,
-            transform_fn=transform_fn,
-            n_workers=n_workers,
-            chunk_size=chunk_size,
-            max_inflight_tasks=max_inflight_tasks,
-            set_name="test",
+        batch_features, batch_labels, batch_skipped, batch_errors = (
+            process_set_chunked_single_pool(
+                dataset_object=test_dataset,
+                executor=ProcessPoolExecutor if n_workers > 1 else ThreadPoolExecutor,
+                transform_fn=transform_fn,
+                n_workers=n_workers,
+                chunk_size=chunk_size,
+                max_inflight_tasks=max_inflight_tasks,
+                set_name="test",
+            )
         )
         all_features.extend(batch_features)
         all_labels.extend(batch_labels)
@@ -624,9 +635,9 @@ def preprocess_dataset_test_only(
     )
 
     test_features_tensor = torch.stack(all_features)
-    test_labels_tensor = torch.tensor(all_labels, dtype=torch.long)
+    test_labels_tensor = stack_labels(all_labels)
     empty_features = torch.empty(0, *test_features_tensor.shape[1:])
-    empty_labels = torch.empty(0, dtype=torch.long)
+    empty_labels = torch.empty(0, *test_labels_tensor.shape[1:], dtype=torch.long)
 
     file_spec = CachedDatasetFileSpec(
         train_features=empty_features,
@@ -743,7 +754,7 @@ def preprocess_dataset_chunked_profile(
     )
 
     val_features_tensor = torch.stack(val_features)
-    val_labels_tensor = torch.tensor(val_labels, dtype=torch.long)
+    val_labels_tensor = stack_labels(val_labels)
 
     test_features, test_labels, skipped_test, errors_test = (
         process_set_chunked_single_pool(
@@ -758,7 +769,7 @@ def preprocess_dataset_chunked_profile(
     )
 
     test_features_tensor = torch.stack(test_features)
-    test_labels_tensor = torch.tensor(test_labels, dtype=torch.long)
+    test_labels_tensor = stack_labels(test_labels)
 
     train_features, train_labels, skipped_train, errors_train = (
         process_set_chunked_single_pool(
@@ -773,7 +784,7 @@ def preprocess_dataset_chunked_profile(
     )
 
     train_features_tensor = torch.stack(train_features)
-    train_labels_tensor = torch.tensor(train_labels, dtype=torch.long)
+    train_labels_tensor = stack_labels(train_labels)
 
     # Fill in missing samples up to the correct split using the test set since
     # it is the least critical for training:
