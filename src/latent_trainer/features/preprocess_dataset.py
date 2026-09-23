@@ -13,7 +13,6 @@ Usage:
 """
 
 import logging
-import os
 from concurrent.futures import (
     FIRST_COMPLETED,
     ProcessPoolExecutor,
@@ -80,23 +79,26 @@ def process_batch(
     errors = 0
 
     with executor(max_workers=n_workers) as executor:
-        futures = [
+        futures = {
             executor.submit(
                 _transform_single_object,
                 dataset_object=dataset_object,
                 index=i,
                 transform_fn=transform_fn,
-            )
+            ): i
             for i in range(start_index, end_index)
-        ]
+        }
+        results = {}
 
         for future in tqdm(
             as_completed(futures),
             desc=f"  Batch {start_index}:{end_index} (parallel)",
             total=len(futures),
         ):
-            result = future.result()
+            results[futures[future]] = future.result()
 
+        for index in range(start_index, end_index):
+            result = results[index]
             if isinstance(result, Exception):
                 errors += 1
             elif result is None:
@@ -326,40 +328,6 @@ def preprocess_dataset(
     val_features_tensor = torch.stack(val_features)
     val_labels_tensor = stack_labels(val_labels)
 
-    # Fill in missing samples up to the correct split using the test set since
-    # it is the least critical for training:
-    if len(train_features_tensor) < 0.8 * total:
-        needed = int(0.8 * total) - len(train_features_tensor)
-        logging.warning(
-            f"Training set has {len(train_features_tensor)} samples, which is less than 80% of total. "
-            f"Filling in {needed} samples from the test set to maintain correct split ratios."
-        )
-        # remove from test set and add to the train set:
-        train_features_tensor = torch.cat(
-            [train_features_tensor, test_features_tensor[:needed]], dim=0
-        )
-        train_labels_tensor = torch.cat(
-            [train_labels_tensor, test_labels_tensor[:needed]], dim=0
-        )
-        test_features_tensor = test_features_tensor[needed:]
-        test_labels_tensor = test_labels_tensor[needed:]
-
-    # Fill in the validation set if needed using the test set since it is the least critical for training:
-    if len(val_features_tensor) < 0.1 * total:
-        needed = int(0.1 * total) - len(val_features_tensor)
-        logging.warning(
-            f"Validation set has {len(val_features_tensor)} samples, which is less than 10% of total. "
-            f"Filling in {needed} samples from the test set to maintain correct split ratios."
-        )
-        val_features_tensor = torch.cat(
-            [val_features_tensor, test_features_tensor[:needed]], dim=0
-        )
-        val_labels_tensor = torch.cat(
-            [val_labels_tensor, test_labels_tensor[:needed]], dim=0
-        )
-        test_features_tensor = test_features_tensor[needed:]
-        test_labels_tensor = test_labels_tensor[needed:]
-
     file_spec = CachedDatasetFileSpec(
         train_features=train_features_tensor,
         train_labels=train_labels_tensor,
@@ -371,14 +339,15 @@ def preprocess_dataset(
     )
 
     # Save
-    os.makedirs(os.path.dirname(output_directory), exist_ok=True)
-    path_to_save = output_directory / f"cached_dataset_{transform_name}.pt"
+    output_path = Path(output_directory)
+    output_path.mkdir(parents=True, exist_ok=True)
+    path_to_save = output_path / f"cached_dataset_{transform_name}.pt"
     torch.save(
         asdict(file_spec),
         path_to_save,
     )
 
-    file_size_mb = os.path.getsize(path_to_save) / (1024 * 1024)
+    file_size_mb = path_to_save.stat().st_size / (1024 * 1024)
 
     logging.info(f"\n{'=' * 60}")
     logging.info("Pre-processing complete!")
@@ -390,7 +359,7 @@ def preprocess_dataset(
     logging.info(f"  Skipped (None):   {skipped_train + skipped_val + skipped_test}")
     logging.info(f"  Errors:           {errors_train + errors_val + errors_test}")
     logging.info(f"  Feature shape:    {train_features_tensor.shape}")
-    logging.info(f"  Cache file:       {output_directory} ({file_size_mb:.1f} MB)")
+    logging.info(f"  Cache file:       {path_to_save} ({file_size_mb:.1f} MB)")
     logging.info(f"{'=' * 60}")
 
 
@@ -480,8 +449,9 @@ def process_set_chunked_single_pool(
     skipped = 0
     errors = 0
 
-    pending_futures = set()
+    pending_futures = {}
     next_chunk = 0
+    results = {}
 
     with executor(max_workers=n_workers) as executor:
         with tqdm(total=total_size, desc=f"{set_name} (chunked-single-pool)") as pbar:
@@ -494,20 +464,19 @@ def process_set_chunked_single_pool(
                     indices=chunks[next_chunk],
                     transform_fn=transform_fn,
                 )
-                pending_futures.add(future)
+                pending_futures[future] = next_chunk
                 next_chunk += 1
 
             while pending_futures:
                 done, _ = wait(pending_futures, return_when=FIRST_COMPLETED)
 
                 for future in done:
-                    pending_futures.remove(future)
+                    chunk_index = pending_futures.pop(future)
 
                     chunk_features, chunk_labels, chunk_skipped, chunk_errors = (
                         future.result()
                     )
-                    set_features.extend(chunk_features)
-                    set_labels.extend(chunk_labels)
+                    results[chunk_index] = (chunk_features, chunk_labels)
                     skipped += chunk_skipped
                     errors += chunk_errors
 
@@ -520,8 +489,13 @@ def process_set_chunked_single_pool(
                             indices=chunks[next_chunk],
                             transform_fn=transform_fn,
                         )
-                        pending_futures.add(new_future)
+                        pending_futures[new_future] = next_chunk
                         next_chunk += 1
+
+    for chunk_index in range(len(chunks)):
+        chunk_features, chunk_labels = results[chunk_index]
+        set_features.extend(chunk_features)
+        set_labels.extend(chunk_labels)
 
     return set_features, set_labels, skipped, errors
 
@@ -649,12 +623,13 @@ def preprocess_dataset_test_only(
         transform=transform_name,
     )
 
-    os.makedirs(os.path.dirname(output_directory), exist_ok=True)
+    output_path = Path(output_directory)
+    output_path.mkdir(parents=True, exist_ok=True)
     n_tag = f"_{len(all_features)}" if n_samples > 0 else ""
-    path_to_save = output_directory / f"cached_dataset_{transform_name}_test{n_tag}.pt"
+    path_to_save = output_path / f"cached_dataset_{transform_name}_test{n_tag}.pt"
     torch.save(asdict(file_spec), path_to_save)
 
-    file_size_mb = os.path.getsize(path_to_save) / (1024 * 1024)
+    file_size_mb = path_to_save.stat().st_size / (1024 * 1024)
     logging.info(f"\n{'=' * 60}")
     logging.info("Test-only pre-processing complete!")
     logging.info(f"  Transform:     {transform_name}")
@@ -786,40 +761,6 @@ def preprocess_dataset_chunked_profile(
     train_features_tensor = torch.stack(train_features)
     train_labels_tensor = stack_labels(train_labels)
 
-    # Fill in missing samples up to the correct split using the test set since
-    # it is the least critical for training:
-    if len(train_features_tensor) < 0.8 * total:
-        needed = int(0.8 * total) - len(train_features_tensor)
-        logging.warning(
-            f"Training set has {len(train_features_tensor)} samples, which is less than 80% of total. "
-            f"Filling in {needed} samples from the test set to maintain correct split ratios."
-        )
-        # remove from test set and add to the train set:
-        train_features_tensor = torch.cat(
-            [train_features_tensor, test_features_tensor[:needed]], dim=0
-        )
-        train_labels_tensor = torch.cat(
-            [train_labels_tensor, test_labels_tensor[:needed]], dim=0
-        )
-        test_features_tensor = test_features_tensor[needed:]
-        test_labels_tensor = test_labels_tensor[needed:]
-
-    # Fill in the validation set if needed using the test set since it is the least critical for training:
-    if len(val_features_tensor) < 0.1 * total:
-        needed = int(0.1 * total) - len(val_features_tensor)
-        logging.warning(
-            f"Validation set has {len(val_features_tensor)} samples, which is less than 10% of total. "
-            f"Filling in {needed} samples from the test set to maintain correct split ratios."
-        )
-        val_features_tensor = torch.cat(
-            [val_features_tensor, test_features_tensor[:needed]], dim=0
-        )
-        val_labels_tensor = torch.cat(
-            [val_labels_tensor, test_labels_tensor[:needed]], dim=0
-        )
-        test_features_tensor = test_features_tensor[needed:]
-        test_labels_tensor = test_labels_tensor[needed:]
-
     file_spec = CachedDatasetFileSpec(
         train_features=train_features_tensor,
         train_labels=train_labels_tensor,
@@ -830,9 +771,10 @@ def preprocess_dataset_chunked_profile(
         transform=transform_name,
     )
 
-    os.makedirs(os.path.dirname(output_directory), exist_ok=True)
+    output_path = Path(output_directory)
+    output_path.mkdir(parents=True, exist_ok=True)
     suffix = f"_{n_samples}" if n_samples > 0 else ""
-    path_to_save = output_directory / f"cached_dataset_{transform_name}{suffix}.pt"
+    path_to_save = output_path / f"cached_dataset_{transform_name}{suffix}.pt"
     torch.save(asdict(file_spec), path_to_save)
 
     logging.info(f"\n{'=' * 60}")

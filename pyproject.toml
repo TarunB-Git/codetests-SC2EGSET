@@ -28,6 +28,9 @@ dependencies = [
     "xgboost>=3.2.0",
 ]
 
+[project.scripts]
+sc2-benchmarks = "latent_trainer.benchmarks.cli:main"
+
 [dependency-groups]
 dev = [
     "mkdocs-gen-files>=0.6.0",
@@ -66,13 +69,17 @@ line-length = 88
 extend-exclude = ["src/sc2_combat_detector/proto", "src/proto"]
 lint.extend-select = ["I"]
 
+[tool.mypy]
+ignore_missing_imports = true
+check_untyped_defs = true
+
 
 [build-system]
 requires = ["uv_build>=0.8.22,<0.9.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-sc2-datasets = { git = "https://github.com/Kaszanas/SC2_Datasets", branch = "dev" }
+sc2-datasets = { git = "https://github.com/Kaszanas/SC2_Datasets", rev = "3f3ee3a48a48f2d47c0d62930d79ca465113816a" }
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cuda", extra = "cuda" },

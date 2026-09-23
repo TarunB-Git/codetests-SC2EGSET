@@ -1,5 +1,7 @@
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 import torch
 from sc2_datasets.torch.datasets.sc2_dataset_single_json import (
     SC2DatasetSingleJSON,
@@ -58,3 +60,6 @@ def test_averaged_economy_preprocessing_uses_aligned_transform():
     assert targets.shape == (2,)
     assert stack_labels([targets, targets]).shape == (2, 2)
     assert stack_labels([0, 1]).shape == (2,)
+
+    with pytest.raises(ValueError, match="tracker-event error"):
+        economy_average_players_vs_outcomes(replace(replay, trackerEventsErr=True))

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -9,6 +10,12 @@ from sc2_datasets.transforms.utils import (
     average_player_stats,
     filter_player_stats,
     select_outcome_1v1,
+)
+
+from latent_trainer.benchmarks.data.source import (
+    InputFormat,
+    ReplaySource,
+    detect_input_format,
 )
 
 STAT_NAMES = tuple(field.name for field in fields(Stats))
@@ -39,7 +46,8 @@ class PlayerReplaySample:
 
 
 def _stats_tensor(events: list) -> tuple[torch.Tensor, torch.Tensor]:
-    ordered = sorted(events, key=lambda event: event.loop)
+    by_loop = {int(event.loop): event for event in events}
+    ordered = [by_loop[loop] for loop in sorted(by_loop)]
     values = [
         [float(getattr(event.stats, name)) for name in STAT_NAMES] for event in ordered
     ]
@@ -53,6 +61,8 @@ def player_samples_from_replay(
     replay: SC2ReplayData,
     min_duration_loops: int = 0,
 ) -> list[PlayerReplaySample]:
+    if replay.trackerEventsErr:
+        return []
     if replay.header.elapsedGameLoops <= min_duration_loops:
         return []
 
@@ -128,7 +138,61 @@ def load_player_samples(
     json_path: Path,
     max_replays: int = 0,
     min_duration_loops: int = 0,
+    offsets_path: Path | None = None,
+    input_format: InputFormat = "auto",
+    source_indices_path: Path | None = None,
 ) -> list[PlayerReplaySample]:
+    if offsets_path is not None:
+        samples: list[PlayerReplaySample] = []
+        with ReplaySource(
+            json_path,
+            offsets_path,
+            input_format=input_format,
+            source_indices_path=source_indices_path,
+        ) as source:
+            limit = len(source) if max_replays <= 0 else min(max_replays, len(source))
+            for index in range(limit):
+                samples.extend(
+                    player_samples_from_replay(
+                        source[index].replay,
+                        min_duration_loops=min_duration_loops,
+                    )
+                )
+        return samples
+    detected_format = detect_input_format(json_path)
+    selected_format = detected_format if input_format == "auto" else input_format
+    if selected_format != detected_format:
+        raise ValueError(
+            f"Requested format {selected_format} does not match detected "
+            f"{detected_format}"
+        )
+    if selected_format == "jsonl":
+        samples = []
+        replay_index = 0
+        with json_path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if max_replays > 0 and replay_index >= max_replays:
+                    break
+                loaded = json.loads(stripped)
+                if not isinstance(loaded, dict):
+                    raise ValueError(
+                        f"JSONL record on line {line_number} is not an object"
+                    )
+                replay = SC2ReplayData.from_dict(
+                    loaded,
+                    replay_filepath=f"record-{replay_index}",
+                )
+                samples.extend(
+                    player_samples_from_replay(
+                        replay,
+                        min_duration_loops=min_duration_loops,
+                    )
+                )
+                replay_index += 1
+        return samples
     dataset = SC2DatasetSingleJSON.from_json_path(json_path)
     limit = len(dataset) if max_replays <= 0 else min(max_replays, len(dataset))
     samples = []
@@ -141,3 +205,42 @@ def load_player_samples(
         )
 
     return samples
+
+
+def load_cached_player_samples(
+    manifest_path: Path,
+    max_replays: int = 0,
+) -> list[PlayerReplaySample]:
+    from latent_trainer.benchmarks.cache.dataset import ShardReplayDataset
+
+    dataset = ShardReplayDataset(manifest_path)
+    limit = len(dataset) if max_replays <= 0 else min(max_replays, len(dataset))
+    result = []
+    for index in range(limit):
+        replay = dataset[index]
+        for slot in range(2):
+            opponent = 1 - slot
+            result.append(
+                PlayerReplaySample(
+                    replay_id=replay["replay_id"],
+                    player_id=replay["player_ids"][slot],
+                    player_toon=replay["toon_ids"][slot],
+                    opponent_id=replay["player_ids"][opponent],
+                    opponent_toon=replay["toon_ids"][opponent],
+                    timestamp=replay["timestamp"],
+                    game_version=replay["game_version"],
+                    map_name=replay["map_name"],
+                    duration_loops=replay["duration_loops"],
+                    race=replay["races"][slot],
+                    opponent_race=replay["races"][opponent],
+                    mmr=float(replay["raw_mmr"][slot]),
+                    opponent_mmr=float(replay["raw_mmr"][opponent]),
+                    outcome=int(replay["outcomes"][slot]),
+                    average=replay["average"][slot],
+                    sequence=replay["sequences"][slot],
+                    sequence_loops=replay["sequence_loops"][slot],
+                    opponent_sequence=replay["sequences"][opponent],
+                    opponent_sequence_loops=replay["sequence_loops"][opponent],
+                )
+            )
+    return result

@@ -120,11 +120,23 @@ ENV/
 site/
 
 data/
+!src/latent_trainer/benchmarks/data/
+!src/latent_trainer/benchmarks/data/**
+data (1)/
+
+benchmark-cache/
+benchmark-results/
+benchmark-splits/
+benchmark-checkpoints/
+*.offsets.json
+*.shard.pt
+*.shard.pt.tmp
 
 # Model outputs (regenerable)
 output/
 *.pth
 *.ckpt
+*.pt
 
 
 mlruns/

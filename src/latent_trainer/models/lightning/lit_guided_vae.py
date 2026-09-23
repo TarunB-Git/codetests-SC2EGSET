@@ -25,6 +25,7 @@ class LitGuidedVAE(pl.LightningModule):
         classification_weight: float = 50.0,
         mean: torch.Tensor | None = None,
         std: torch.Tensor | None = None,
+        compatibility_metadata: dict[str, str | int] | None = None,
     ) -> None:
         """Initialise the LitGuidedVAE module.
 
@@ -76,6 +77,7 @@ class LitGuidedVAE(pl.LightningModule):
         self.learning_rate_cls = learning_rate_cls
         self.weight_decay_cls = weight_decay_cls
         self.classification_weight = classification_weight
+        self.compatibility_metadata = compatibility_metadata or {}
 
         # Manual optimisation (3 optimizers), required for the
         # alternating adversarial training steps:
@@ -142,9 +144,10 @@ class LitGuidedVAE(pl.LightningModule):
         valid_data = data
         valid_label = self._prepare_label(label=label)
 
-        optimizer_vae, optimizer_classification, optimizer_adversarial = (
-            self.optimizers()
-        )
+        optimizers = self.optimizers()
+        if not isinstance(optimizers, (list, tuple)) or len(optimizers) != 3:
+            raise RuntimeError("Guided VAE requires three optimizers")
+        optimizer_vae, optimizer_classification, optimizer_adversarial = optimizers
         # Step 1: VAE
         optimizer_vae.zero_grad()
         recon_batch, mu, logvar, re = self.model(valid_data)
@@ -221,10 +224,13 @@ class LitGuidedVAE(pl.LightningModule):
         return vae_total + adversarial_classification_loss + adv_loss
 
     def on_train_epoch_end(self) -> None:
-        sch1, sch2, sch3 = self.lr_schedulers()
-        sch1.step()
-        sch2.step()
-        sch3.step()
+        schedulers = self.lr_schedulers()
+        if not isinstance(schedulers, (list, tuple)) or len(schedulers) != 3:
+            raise RuntimeError("Guided VAE requires three schedulers")
+        for scheduler in schedulers:
+            if not isinstance(scheduler, optim.lr_scheduler.CosineAnnealingLR):
+                raise RuntimeError("Guided VAE scheduler type differs")
+            scheduler.step()
 
     def validation_step(self, batch, batch_idx):
         data, label = batch[0], batch[1]
@@ -285,3 +291,6 @@ class LitGuidedVAE(pl.LightningModule):
         )
 
         return [opt_vae, opt_cls, opt_adv], [sched_vae, sched_cls, sched_adv]
+
+    def on_save_checkpoint(self, checkpoint: dict) -> None:
+        checkpoint["benchmark_compatibility"] = self.compatibility_metadata

@@ -43,6 +43,8 @@ def path_gradient_ascent(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     backprop_fn = logit_fn if logit_fn is not None else score_fn
+    if backprop_fn is None:
+        raise RuntimeError("A scoring function is required")
 
     Z_ref = torch.tensor(Z_all, dtype=torch.float32, device=device)
     z = torch.tensor(
@@ -57,12 +59,16 @@ def path_gradient_ascent(
             z.grad.zero_()
         logit_out = backprop_fn(z.unsqueeze(0))
         logit_out.backward()
+        if z.grad is None:
+            raise RuntimeError("Classifier score did not produce a gradient")
         grad_cls = z.grad.detach().clone()
 
         # KDE density gradient (fresh autograd graph, outside no_grad)
         z_kde = z.detach().requires_grad_(True)
         log_dens = _kde_log_density(z_kde, Z_ref, kde_bandwidth)
         log_dens.backward()
+        if z_kde.grad is None:
+            raise RuntimeError("Density score did not produce a gradient")
         grad_kde = z_kde.grad.detach().clone()
 
         # Parameter update (no autograd needed)
@@ -78,6 +84,8 @@ def path_gradient_ascent(
                 if score_fn is not None:
                     current_p = score_fn(z.unsqueeze(0)).squeeze().item()
                 else:
+                    if logit_fn is None:
+                        raise RuntimeError("A logit function is required")
                     current_p = torch.sigmoid(logit_fn(z.unsqueeze(0))).squeeze().item()
             print(
                 f"    step {step:4d}  P(win)={current_p:.4f}"
@@ -87,6 +95,6 @@ def path_gradient_ascent(
                 print(f"  [GA]  Converged at step {step}  P(win)={current_p:.4f}")
                 break
 
-    trajectory = np.array(trajectory)
-    indices = np.linspace(0, len(trajectory) - 1, n_waypoints, dtype=int)
-    return trajectory[indices]
+    trajectory_array = np.array(trajectory)
+    indices = np.linspace(0, len(trajectory_array) - 1, n_waypoints, dtype=int)
+    return trajectory_array[indices]

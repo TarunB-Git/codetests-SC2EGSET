@@ -21,14 +21,18 @@ def classification_metrics(
     targets = np.asarray(targets, dtype=int)
     probabilities = np.asarray(probabilities, dtype=float)
     predictions = (probabilities >= threshold).astype(int)
+    has_two_classes = np.unique(targets).size == 2
     auroc = (
-        float(roc_auc_score(targets, probabilities))
-        if np.unique(targets).size == 2
+        float(roc_auc_score(targets, probabilities)) if has_two_classes else math.nan
+    )
+    balanced_accuracy = (
+        float(balanced_accuracy_score(targets, predictions))
+        if has_two_classes
         else math.nan
     )
     return {
         "accuracy": float(accuracy_score(targets, predictions)),
-        "balanced_accuracy": float(balanced_accuracy_score(targets, predictions)),
+        "balanced_accuracy": balanced_accuracy,
         "auroc": auroc,
         "f1": float(f1_score(targets, predictions, zero_division=0)),
         "brier": float(brier_score_loss(targets, probabilities)),
@@ -41,7 +45,11 @@ def regression_metrics(
 ) -> dict[str, float]:
     targets = np.asarray(targets, dtype=float)
     predictions = np.asarray(predictions, dtype=float)
-    correlation = spearmanr(targets, predictions).statistic
+    correlation = (
+        spearmanr(targets, predictions).statistic
+        if np.unique(targets).size > 1 and np.unique(predictions).size > 1
+        else math.nan
+    )
     return {
         "mae": float(mean_absolute_error(targets, predictions)),
         "rmse": float(mean_squared_error(targets, predictions) ** 0.5),

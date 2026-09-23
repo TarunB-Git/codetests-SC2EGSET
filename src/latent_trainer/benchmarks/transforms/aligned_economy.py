@@ -11,6 +11,8 @@ HISTORICAL_MIN_DURATION_LOOPS = 12000
 def economy_average_players_vs_outcomes(
     sc2_replay: SC2ReplayData,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    if sc2_replay.trackerEventsErr:
+        raise ValueError("PlayerStats are unavailable after a tracker-event error")
     averaged = average_player_stats(sc2_replay)
     outcomes = select_outcome_1v1(sc2_replay)
     player_ids = sorted(averaged, key=int)

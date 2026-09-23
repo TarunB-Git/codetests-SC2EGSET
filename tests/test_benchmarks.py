@@ -8,6 +8,9 @@ from sc2_datasets.torch.datasets.sc2_dataset_single_json import (
     SC2DatasetSingleJSON,
 )
 
+import latent_trainer.benchmarks.task1.sequence as task1_sequence_module
+import latent_trainer.benchmarks.task2.prefix as task2_prefix_module
+import latent_trainer.benchmarks.task3.skill as task3_skill_module
 from latent_trainer.benchmarks.common.data import load_player_samples
 from latent_trainer.benchmarks.common.metrics import (
     classification_metrics,
@@ -19,22 +22,26 @@ from latent_trainer.benchmarks.common.models import (
 )
 from latent_trainer.benchmarks.common.splits import (
     assert_disjoint_groups,
+    grouped_calibration_folds,
     grouped_split,
     mmr_shift_split,
     player_held_out_split,
     temporal_split,
 )
+from latent_trainer.benchmarks.task1.sequence import run_sequence_benchmark
 from latent_trainer.benchmarks.task1.static import (
     run_static_benchmark,
     tabular_view,
 )
 from latent_trainer.benchmarks.task2.prefix import (
     build_prefix_data,
+    run_prefix_benchmark,
     turning_points,
 )
 from latent_trainer.benchmarks.task3.skill import (
     build_skill_data,
     quantile_classes,
+    run_skill_benchmark,
 )
 from latent_trainer.benchmarks.transforms.aligned_economy import (
     historical_economy_average_players_vs_outcomes,
@@ -46,6 +53,22 @@ JSON_PATH = (
 )
 
 
+def _runner_samples(count: int = 40):
+    source = load_player_samples(JSON_PATH)[0]
+    return [
+        replace(
+            source,
+            replay_id=f"replay-{index}",
+            player_toon=f"toon-{index}",
+            opponent_toon=f"opponent-{index}",
+            mmr=float(1000 + index * 75),
+            opponent_mmr=float(4200 - index * 50),
+            outcome=index % 2,
+        )
+        for index in range(count)
+    ]
+
+
 def test_player_samples_and_prefixes_are_aligned_and_causal():
     samples = load_player_samples(JSON_PATH)
     assert len(samples) == 4
@@ -54,6 +77,7 @@ def test_player_samples_and_prefixes_are_aligned_and_causal():
         assert sample.average.shape == (39,)
         assert sample.sequence.shape[1] == 39
         assert sample.sequence_loops.max().item() <= sample.duration_loops
+        assert sample.sequence_loops.unique().numel() == len(sample.sequence_loops)
         assert sample.outcome in (0, 1)
 
     one_minute = build_prefix_data(samples, 1)
@@ -85,6 +109,11 @@ def test_split_strategies_and_group_leakage_checks():
     split = grouped_split(groups, seed=7)
     assert_disjoint_groups(split, groups)
     assert len(split.train) + len(split.validation) + len(split.test) == len(groups)
+
+    targets = np.tile([0, 1], 10)
+    folds = grouped_calibration_folds(targets, groups, seed=7)
+    for train, calibration in folds:
+        assert set(groups[train]).isdisjoint(groups[calibration])
 
     player_split = player_held_out_split(
         groups,
@@ -132,6 +161,25 @@ def test_tabular_views_and_static_protocols(tmp_path: Path):
         protocol="corrected",
     )
     assert set(result["models"]["logistic"]) == {"validation", "test"}
+
+    calibrated = run_static_benchmark(
+        cache_path,
+        models=("logistic",),
+        view="one-player",
+        protocol="corrected",
+        calibrated=True,
+    )
+    assert calibrated["models"]["logistic"]["test"]["samples"] == 10
+
+    cache["transform"] = "rich"
+    torch.save(cache, cache_path)
+    with pytest.raises(ValueError, match="averaged_economy"):
+        run_static_benchmark(
+            cache_path,
+            models=("logistic",),
+            view="one-player",
+            protocol="corrected",
+        )
 
     cache["transform"] = "historical_averaged_economy"
     torch.save(cache, cache_path)
@@ -218,8 +266,52 @@ def test_metrics_and_turning_points():
     regression = regression_metrics(
         np.asarray([1.0, 2.0, 3.0]), np.asarray([1.1, 1.9, 3.2])
     )
+    single_class = classification_metrics(np.asarray([1, 1]), np.asarray([0.8, 0.9]))
+    constant_regression = regression_metrics(
+        np.asarray([1.0, 2.0]), np.asarray([1.5, 1.5])
+    )
     points = turning_points({"sample": {1.0: 0.5, 2.0: 0.7, 3.0: 0.6}})
 
     assert classification["accuracy"] == 1.0
+    assert np.isnan(single_class["balanced_accuracy"])
     assert regression["spearman"] == pytest.approx(1.0)
+    assert np.isnan(constant_regression["spearman"])
     assert points["sample"][1]["delta_probability"] == pytest.approx(0.2)
+
+
+def test_task_runners_smoke(monkeypatch: pytest.MonkeyPatch):
+    samples = _runner_samples()
+    monkeypatch.setattr(
+        task1_sequence_module, "load_player_samples", lambda *args, **kwargs: samples
+    )
+    monkeypatch.setattr(
+        task2_prefix_module, "load_player_samples", lambda *args, **kwargs: samples
+    )
+    monkeypatch.setattr(
+        task3_skill_module, "load_player_samples", lambda *args, **kwargs: samples
+    )
+
+    task1 = run_sequence_benchmark(
+        JSON_PATH,
+        model_name="gru",
+        epochs=1,
+    )
+    task2 = run_prefix_benchmark(
+        JSON_PATH,
+        model_name="logistic",
+        information="prior-only",
+        minutes=(1,),
+        calibrated=True,
+    )
+    task3 = run_skill_benchmark(
+        JSON_PATH,
+        objective="classification",
+        representation="averaged",
+        model_name="xgboost",
+        class_count=2,
+    )
+
+    assert task1["task"] == "1B"
+    assert task2["task"] == "2"
+    assert task3["task"] == "3B"
+    assert task3["validation_samples"] > 0

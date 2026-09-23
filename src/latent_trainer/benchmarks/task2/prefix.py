@@ -5,9 +5,11 @@ import numpy as np
 import torch
 from sklearn.linear_model import LogisticRegression
 
+from latent_trainer.benchmarks.cache.manifest import CacheManifest
 from latent_trainer.benchmarks.common.data import (
     GAME_LOOPS_PER_SECOND,
     PlayerReplaySample,
+    load_cached_player_samples,
     load_player_samples,
 )
 from latent_trainer.benchmarks.common.metrics import (
@@ -20,7 +22,12 @@ from latent_trainer.benchmarks.common.models import (
     predict_sequence_model,
     train_sequence_model,
 )
-from latent_trainer.benchmarks.common.splits import grouped_split
+from latent_trainer.benchmarks.common.provenance import software_provenance
+from latent_trainer.benchmarks.common.splits import (
+    grouped_split,
+    indices_from_split_manifest,
+)
+from latent_trainer.benchmarks.data.source import InputFormat
 
 
 @dataclass(frozen=True)
@@ -32,13 +39,14 @@ class PrefixData:
     sequences: list[torch.Tensor]
     labels: np.ndarray
     mmr: np.ndarray
+    last_observed_loops: np.ndarray
     cutoff_loop: int
 
 
 def _paired_prefix(
     sample: PlayerReplaySample,
     cutoff_loop: int,
-) -> torch.Tensor | None:
+) -> tuple[torch.Tensor, int] | None:
     own_positions = {
         int(loop): sample.sequence[index]
         for index, loop in enumerate(sample.sequence_loops)
@@ -53,6 +61,7 @@ def _paired_prefix(
     own = None
     opponent = None
     paired = []
+    paired_loops = []
 
     for loop in loops:
         if loop in own_positions:
@@ -61,10 +70,11 @@ def _paired_prefix(
             opponent = opponent_positions[loop]
         if own is not None and opponent is not None:
             paired.append(torch.cat([own, opponent]))
+            paired_loops.append(loop)
 
     if not paired:
         return None
-    return torch.stack(paired)
+    return torch.stack(paired), paired_loops[-1]
 
 
 def build_prefix_data(
@@ -79,13 +89,15 @@ def build_prefix_data(
     sequences = []
     labels = []
     mmr = []
+    last_observed_loops = []
 
     for sample in samples:
         if sample.duration_loops < cutoff_loop:
             continue
-        sequence = _paired_prefix(sample, cutoff_loop)
-        if sequence is None:
+        prefix = _paired_prefix(sample, cutoff_loop)
+        if prefix is None:
             continue
+        sequence, last_observed_loop = prefix
         keys.append(f"{sample.replay_id}:{sample.player_id}")
         replay_ids.append(sample.replay_id)
         states.append(sequence[-1].numpy())
@@ -93,6 +105,7 @@ def build_prefix_data(
         sequences.append(sequence)
         labels.append(sample.outcome)
         mmr.append(sample.mmr)
+        last_observed_loops.append(last_observed_loop)
 
     if not sequences:
         raise ValueError(f"No samples remain at {minute} minutes")
@@ -105,6 +118,7 @@ def build_prefix_data(
         sequences=sequences,
         labels=np.asarray(labels, dtype=int),
         mmr=np.asarray(mmr, dtype=float),
+        last_observed_loops=np.asarray(last_observed_loops, dtype=int),
         cutoff_loop=cutoff_loop,
     )
 
@@ -203,8 +217,9 @@ def _calibrate_sequence_probabilities(
 
 def turning_points(
     predictions: dict[str, dict[float, float]],
-) -> dict[str, list[dict[str, float]]]:
-    result = {}
+    event_loops: dict[str, dict[float, int]] | None = None,
+) -> dict[str, list[dict[str, object]]]:
+    result: dict[str, list[dict[str, object]]] = {}
     for key, values in predictions.items():
         ordered = sorted(values.items())
         result[key] = [
@@ -214,6 +229,15 @@ def turning_points(
                 "delta_probability": float(probability - ordered[index - 1][1])
                 if index > 0
                 else 0.0,
+                "candidate_type": "model_derived_turning_point",
+                "causal_claim": False,
+                "mapped_replay_event": {
+                    "event_type": "PlayerStats",
+                    "game_loop": event_loops[key][minute],
+                    "mapping": "latest observed PlayerStats at the prefix cutoff",
+                }
+                if event_loops is not None
+                else None,
             }
             for index, (minute, probability) in enumerate(ordered)
         ]
@@ -221,7 +245,7 @@ def turning_points(
 
 
 def run_prefix_benchmark(
-    json_path: Path,
+    json_path: Path | None,
     model_name: str,
     information: str,
     minutes: tuple[float, ...] = (1, 2, 3, 5, 7, 10),
@@ -230,15 +254,43 @@ def run_prefix_benchmark(
     calibrated: bool = True,
     source: str = "sc2ggset",
     seed: int = 42,
+    offsets_path: Path | None = None,
+    input_format: InputFormat = "auto",
+    source_indices_path: Path | None = None,
+    cache_manifest_path: Path | None = None,
+    split_path: Path | None = None,
 ) -> dict:
-    samples = load_player_samples(json_path, max_replays=max_replays)
+    if model_name in {"gru", "transformer"} and information == "prior-only":
+        raise ValueError("Prior-only uses a tabular model; choose logistic or xgboost")
+    if cache_manifest_path is not None:
+        samples = load_cached_player_samples(cache_manifest_path, max_replays)
+    elif json_path is not None:
+        samples = load_player_samples(
+            json_path,
+            max_replays=max_replays,
+            offsets_path=offsets_path,
+            input_format=input_format,
+            source_indices_path=source_indices_path,
+        )
+    else:
+        raise ValueError("Task 2 requires a JSON source or cache manifest")
     replay_ids = sorted({sample.replay_id for sample in samples})
-    replay_split = grouped_split(replay_ids, seed=seed)
+    cache_fingerprint = (
+        CacheManifest.load(cache_manifest_path).fingerprint()
+        if cache_manifest_path is not None
+        else None
+    )
+    replay_split = (
+        indices_from_split_manifest(replay_ids, split_path, cache_fingerprint)
+        if split_path is not None
+        else grouped_split(replay_ids, seed=seed)
+    )
     train_replays = {replay_ids[index] for index in replay_split.train}
     validation_replays = {replay_ids[index] for index in replay_split.validation}
     test_replays = {replay_ids[index] for index in replay_split.test}
     output = {}
     predictions: dict[str, dict[float, float]] = {}
+    event_loops: dict[str, dict[float, int]] = {}
 
     for minute in minutes:
         data = build_prefix_data(samples, minute)
@@ -264,11 +316,20 @@ def run_prefix_benchmark(
             ]
         )
 
+        invalid_prior_excluded = 0
         if information in {"prior-only", "combined"}:
             valid = np.all(data.prior > 0, axis=1)
+            invalid_prior_excluded = int((~valid).sum())
             train = train[valid[train]]
             validation = validation[valid[validation]]
             test = test[valid[test]]
+
+        if not len(train) or not len(validation) or not len(test):
+            raise ValueError(f"Window {minute} has an empty data partition")
+        if np.unique(data.labels[train]).size != 2:
+            raise ValueError(
+                f"Window {minute} training data requires both outcome classes"
+            )
 
         if model_name in {"gru", "transformer"}:
             sequences = _information_sequences(data, information)
@@ -294,13 +355,29 @@ def run_prefix_benchmark(
                 )
         else:
             features = _information_arrays(data, information)
-            model = make_classifier(model_name, seed=seed, calibrated=calibrated)
+            model = make_classifier(
+                model_name,
+                seed=seed,
+                calibrated=False,
+            )
             model.fit(features[train], data.labels[train])
             probabilities = positive_probabilities(model, features[test])
+            if calibrated:
+                validation_probabilities = positive_probabilities(
+                    model, features[validation]
+                )
+                probabilities = _calibrate_sequence_probabilities(
+                    data.labels[validation],
+                    validation_probabilities,
+                    probabilities,
+                )
 
         for index, probability in zip(test, probabilities, strict=True):
             predictions.setdefault(data.sample_keys[index], {})[minute] = float(
                 probability
+            )
+            event_loops.setdefault(data.sample_keys[index], {})[minute] = int(
+                data.last_observed_loops[index]
             )
 
         output[str(minute)] = {
@@ -308,6 +385,23 @@ def run_prefix_benchmark(
             "games_at_risk": int(len(set(data.replay_ids))),
             "train_samples": int(len(train)),
             "test_samples": int(len(test)),
+            "invalid_prior_samples_excluded": invalid_prior_excluded,
+            "train_class_counts": {
+                str(value): int((data.labels[train] == value).sum())
+                for value in np.unique(data.labels[train])
+            },
+            "test_class_counts": {
+                str(value): int((data.labels[test] == value).sum())
+                for value in np.unique(data.labels[test])
+            },
+            "saved_probabilities": [
+                {
+                    "sample_key": data.sample_keys[index],
+                    "replay_id": data.replay_ids[index],
+                    "probability": float(probability),
+                }
+                for index, probability in zip(test, probabilities, strict=True)
+            ],
             "groups": _evaluate_groups(
                 data.labels[test],
                 probabilities,
@@ -322,7 +416,11 @@ def run_prefix_benchmark(
         "model": model_name,
         "information": information,
         "source": source,
-        "split": "replay-grouped",
+        "split": str(split_path) if split_path is not None else "replay-grouped",
         "windows": output,
-        "turning_points": turning_points(predictions),
+        "turning_points": turning_points(predictions, event_loops),
+        "provenance": {
+            "software": software_provenance(),
+            "cache_fingerprint": cache_fingerprint,
+        },
     }

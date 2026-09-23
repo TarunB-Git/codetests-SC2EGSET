@@ -137,8 +137,6 @@ def _run_method_inner(
     device = ctx.sample_z.device
     z_start_np = ctx.sample_z.detach().cpu().numpy()
     win_np = win_latents.detach().cpu().numpy()
-    all_np = all_latents.detach().cpu().numpy()
-
     # Partition latent space: strategies operate only on supervised dims;
     # free dims are pinned to the starting value and reattached after.
     sup_dim = get_supervised_dim(ctx.guided_vae)

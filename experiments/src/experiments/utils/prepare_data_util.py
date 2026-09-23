@@ -1,5 +1,5 @@
-from sklearn.preprocessing import StandardScaler
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 
 
 def prep_for_dim_reduction(grouped_field: str, result_df: pd.DataFrame):

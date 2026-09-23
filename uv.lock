@@ -1583,7 +1583,7 @@ requires-dist = [
     { name = "plotpy", specifier = ">=2.7.5" },
     { name = "pot", specifier = ">=0.9.6.post1" },
     { name = "ray", extras = ["tune"], specifier = ">=2.54.0" },
-    { name = "sc2-datasets", git = "https://github.com/Kaszanas/SC2_Datasets?branch=dev" },
+    { name = "sc2-datasets", git = "https://github.com/Kaszanas/SC2_Datasets?rev=3f3ee3a48a48f2d47c0d62930d79ca465113816a" },
     { name = "scikit-learn", specifier = ">=1.7.2" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "shap", specifier = ">=0.51.0" },
@@ -3949,7 +3949,7 @@ wheels = [
 [[package]]
 name = "sc2-datasets"
 version = "2.1.0"
-source = { git = "https://github.com/Kaszanas/SC2_Datasets?branch=dev#e6c2474b2accc231aefcdc63180e788d7a26e224" }
+source = { git = "https://github.com/Kaszanas/SC2_Datasets?rev=3f3ee3a48a48f2d47c0d62930d79ca465113816a#3f3ee3a48a48f2d47c0d62930d79ca465113816a" }
 dependencies = [
     { name = "lightning" },
     { name = "pandas" },

@@ -301,13 +301,6 @@ def prepare_player_features(
     #     )
     # )
 
-    # 7. Game duration (same for both, but included):
-    duration = np.array([game_duration], dtype=np.float32)
-
-    # REVIEW: Why do we have duration in here?
-    # REVIEW: What will the model learn to do with duration? It is not player
-    # REVIEW: specific information.
-
     # Concatenate all features for this player
     player_feat = np.concatenate(
         [

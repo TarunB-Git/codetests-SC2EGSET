@@ -184,6 +184,8 @@ class LitOTFlowMatching(LightningModule):
             z_g = z.detach().requires_grad_(True)
             score = score_fn(z_g)
             score.sum().backward()
+            if z_g.grad is None:
+                raise RuntimeError("Classifier guidance did not produce a gradient")
             grad = z_g.grad.detach()
             grad_unit = grad / (grad.norm(dim=-1, keepdim=True) + 1e-8)
 

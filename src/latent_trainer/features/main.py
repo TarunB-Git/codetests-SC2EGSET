@@ -10,7 +10,7 @@ from latent_trainer.features.preprocess_dataset import (
     preprocess_dataset_chunked_profile,
     preprocess_dataset_test_only,
 )
-from latent_trainer.settings import DATA_DIR, LOGGING_FORMAT, SEED
+from latent_trainer.settings import DATA_DIR, LOGGING_FORMAT
 
 
 @click.command(
@@ -80,7 +80,7 @@ def main(
         format=LOGGING_FORMAT,
     )
 
-    pl.seed_everything(SEED)
+    pl.seed_everything(seed)
 
     try:
         if test_only:
@@ -103,8 +103,9 @@ def main(
             n_samples=n_samples,
             seed=seed,
         )
-    except Exception as e:
-        logging.error(f"Error during dataset preprocessing: {e}")
+    except Exception as error:
+        logging.exception("Dataset preprocessing failed")
+        raise click.ClickException(str(error)) from error
 
 
 if __name__ == "__main__":

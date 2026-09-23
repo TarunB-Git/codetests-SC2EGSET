@@ -2,24 +2,22 @@
 
 from pathlib import Path
 
-import pandas as pd
-
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # UMAP:
 import umap
 import umap.plot
 
-# t-SNE:
-from sklearn.manifold import TSNE
-
 # PCA
 from sklearn.decomposition import PCA
 
-from experiments.utils.prepare_data_util import prep_for_dim_reduction
-from experiments.utils.drop_fields_util import drop_unused_fields
+# t-SNE:
+from sklearn.manifold import TSNE
 
+from experiments.utils.drop_fields_util import drop_unused_fields
 from experiments.utils.groupby_util import groupby_fields_mean
+from experiments.utils.prepare_data_util import prep_for_dim_reduction
 
 if __name__ == "__main__":
     # %%

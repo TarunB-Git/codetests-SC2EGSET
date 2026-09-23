@@ -1,4 +1,5 @@
 from typing import Dict, List
+
 import pandas as pd
 
 
@@ -29,7 +30,6 @@ def drop_unused_fields(
 
     # Dropping game hash:
     for grouped_field, result_df in grouped_dataframes.items():
-        grouped_unique_games = result_df["game_hash"].nunique()
         # print(f"Grouped unique games by {grouped_field}: {grouped_unique_games}")
         # print(
         #     f"Unique games grouped by {grouped_field} and grouped games match: {unique_games == grouped_unique_games}"
