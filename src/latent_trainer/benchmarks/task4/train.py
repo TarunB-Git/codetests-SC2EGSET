@@ -34,6 +34,7 @@ def train_guided_vae(
     learning_rate: float = 1e-4,
     seed: int = 42,
     workers: int = 0,
+    accelerator: str = "auto",
 ) -> dict[str, Any]:
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError("Task 4 output directory is not empty")
@@ -101,6 +102,7 @@ def train_guided_vae(
         logger=False,
         callbacks=[checkpoint],
         enable_checkpointing=True,
+        accelerator=accelerator,
     )
     trainer.fit(model, train_loader, validation_loader)
     result = {

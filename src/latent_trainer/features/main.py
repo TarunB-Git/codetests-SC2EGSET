@@ -28,7 +28,7 @@ from latent_trainer.settings import DATA_DIR, LOGGING_FORMAT
 @click.option(
     "--single_json_dataset_path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path, resolve_path=True),
-    default=Path("H:/sc2egset_merged/sc2egset_merged.json").resolve(),
+    required=True,
     help="Path to the single JSON dataset file.",
     show_default=True,
 )

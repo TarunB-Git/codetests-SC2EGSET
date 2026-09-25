@@ -1,7 +1,7 @@
 [project]
 name = "latent-trainer"
 version = "0.1.0"
-description = "Add your description here"
+description = "Leakage-resistant StarCraft II replay benchmarks and representation learning"
 readme = "README.md"
 requires-python = ">=3.11"
 

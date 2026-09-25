@@ -695,6 +695,11 @@ def task3(
 @click.option("--learning-rate", type=float, default=1e-4)
 @click.option("--seed", type=int, default=42)
 @click.option("--workers", type=int, default=0)
+@click.option(
+    "--accelerator",
+    type=click.Choice(["auto", "cpu", "gpu"]),
+    default="auto",
+)
 def task4_train(
     cache_manifest: Path,
     split_path: Path,
@@ -706,6 +711,7 @@ def task4_train(
     learning_rate: float,
     seed: int,
     workers: int,
+    accelerator: str,
 ) -> None:
     _emit(
         train_guided_vae(
@@ -719,6 +725,7 @@ def task4_train(
             learning_rate=learning_rate,
             seed=seed,
             workers=workers,
+            accelerator=accelerator,
         ),
         None,
     )

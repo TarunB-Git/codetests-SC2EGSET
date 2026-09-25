@@ -139,6 +139,9 @@ def test_shared_loader_reads_first_and_last_jsonl_records(tmp_path: Path):
 def test_cli_help_and_fatal_errors_are_nonzero():
     runner = CliRunner()
     assert runner.invoke(main, ["source-index", "--help"]).exit_code == 0
+    task4_help = runner.invoke(main, ["task4-train", "--help"])
+    assert task4_help.exit_code == 0
+    assert "--accelerator [auto|cpu|gpu]" in task4_help.output
     result = runner.invoke(main, ["task1-sequence", "--model", "gru"])
     assert result.exit_code != 0
     assert "exactly one" in result.output

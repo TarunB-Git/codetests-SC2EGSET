@@ -24,6 +24,106 @@ uv sync --extra cpu    # CPU-only
 
 Activate the environment before running any command below.
 
+## SC2GGSet benchmark suite
+
+The `sc2-benchmarks` command provides the publication-oriented Tasks 0–4
+pipeline. It supports JSONL and bracketed SingleJSON sources, stores byte
+offsets outside the raw data, extracts bounded reusable shards, and uses saved
+split manifests so every model is evaluated on the same games. Raw datasets,
+offsets, caches, splits, checkpoints, and results are ignored by Git.
+
+Run `uv run sc2-benchmarks --help` for the command list and append `--help` to
+any command for its options. A typical corpus setup is:
+
+```bash
+RAW_JSONL="/path/to/sc2ggset.jsonl"
+SOURCE_INDICES="/path/to/sc2ggset.indices.json"
+OFFSETS="data/offsets/sc2ggset.offsets.json"
+CACHE="benchmark-cache/sc2ggset-full"
+SPLIT="benchmark-splits/sc2ggset-full.json"
+RESULTS="benchmark-results/sc2ggset-full"
+
+uv run sc2-benchmarks source-index \
+    --json-path "$RAW_JSONL" \
+    --input-format auto \
+    --source-indices "$SOURCE_INDICES" \
+    --offsets-path "$OFFSETS"
+
+uv run sc2-benchmarks task0-audit \
+    --json-path "$RAW_JSONL" \
+    --input-format auto \
+    --source-indices "$SOURCE_INDICES" \
+    --offsets-path "$OFFSETS" \
+    --output-dir "$RESULTS/task0"
+
+uv run sc2-benchmarks cache-extract \
+    --json-path "$RAW_JSONL" \
+    --input-format auto \
+    --source-indices "$SOURCE_INDICES" \
+    --offsets-path "$OFFSETS" \
+    --output-dir "$CACHE" \
+    --shard-size 500 \
+    --workers 4 \
+    --seed 42
+
+uv run sc2-benchmarks cache-validate \
+    --manifest "$CACHE/manifest.json" \
+    --output "$RESULTS/cache-validation.json"
+
+uv run sc2-benchmarks split-generate \
+    --cache-manifest "$CACHE/manifest.json" \
+    --strategy replay-grouped \
+    --seed 42 \
+    --output "$SPLIT"
+```
+
+If there is no original-index sidecar, omit `--source-indices`. After validating
+the cache and split, run each Task 1–4 configuration with an explicit output.
+For example:
+
+```bash
+uv run sc2-benchmarks task1-static \
+    --cache "$CACHE/manifest.json" \
+    --split "$SPLIT" \
+    --model xgboost \
+    --protocol corrected \
+    --view one-player \
+    --output "$RESULTS/task1a.json"
+
+uv run sc2-benchmarks task1-sequence \
+    --cache-manifest "$CACHE/manifest.json" \
+    --split "$SPLIT" \
+    --model gru \
+    --output "$RESULTS/task1b-gru.json"
+
+uv run sc2-benchmarks task2 \
+    --cache-manifest "$CACHE/manifest.json" \
+    --split "$SPLIT" \
+    --model gru \
+    --information combined \
+    --output "$RESULTS/task2-combined-gru.json"
+
+uv run sc2-benchmarks task3 \
+    --cache-manifest "$CACHE/manifest.json" \
+    --split "$SPLIT" \
+    --objective regression \
+    --representation sequence \
+    --model gru \
+    --output "$RESULTS/task3a-sequence-gru.json"
+
+uv run sc2-benchmarks task4-train \
+    --cache-manifest "$CACHE/manifest.json" \
+    --split "$SPLIT" \
+    --output-dir "benchmark-checkpoints/sc2ggset-full/task4-seed42" \
+    --accelerator cpu \
+    --seed 42
+```
+
+Use `--resume` with the same source and output paths to continue an interrupted
+cache extraction. Commands refuse to overwrite existing results or checkpoints.
+The suite records provenance, but results require review across seeds, splits,
+and the intended full corpus before they support scientific claims.
+
 ---
 
 ### 2. Preprocess the dataset
@@ -37,7 +137,7 @@ python src/latent_trainer/features/main.py --help
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--transform` | `rich` | Feature transform: `rich` (204 features) or `averaged_economy` (39 features) |
-| `--single_json_dataset_path` | `H:/sc2egset_merged/sc2egset_merged.json` | Path to the SC2EGSet JSON file |
+| `--single_json_dataset_path` | required | Path to the SC2EGSet JSON file |
 | `--n_workers` | `24` | Parallel workers |
 | `--n_samples` | `0` (all) | Randomly sample N games before processing; `0` = use all |
 | `--seed` | `42` | Random seed for sampling |
@@ -49,20 +149,20 @@ python src/latent_trainer/features/main.py --help
 Process the full dataset using rich transform:
 ```bash
 python src/latent_trainer/features/main.py \
-    --single_json_dataset_path H:/sc2egset_merged/sc2egset_merged.json
+    --single_json_dataset_path /path/to/sc2egset_merged.json
 ```
 
 Random subset of 2000 games from a large dataset:
 ```bash
 python src/latent_trainer/features/main.py \
-    --single_json_dataset_path H:/sc2egset_large/sc2egset_large.json \
+    --single_json_dataset_path /path/to/sc2egset_large.json \
     --n_samples 2000 \
 ```
 
 Create only a test split of 500 samples (for quick iteration):
 ```bash
 python src/latent_trainer/features/main.py \
-    --single_json_dataset_path H:/sc2egset_merged/sc2egset_merged.json \
+    --single_json_dataset_path /path/to/sc2egset_merged.json \
     --n_samples 500 \
     --test_only
 ```

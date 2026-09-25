@@ -122,6 +122,8 @@ site/
 data/
 !src/latent_trainer/benchmarks/data/
 !src/latent_trainer/benchmarks/data/**
+src/latent_trainer/benchmarks/data/__pycache__/
+src/latent_trainer/benchmarks/data/**/*.py[cod]
 data (1)/
 
 benchmark-cache/

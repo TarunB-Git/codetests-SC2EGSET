@@ -255,8 +255,7 @@ def preprocess_dataset(
     dataset_name : str, optional
         Name of the dataset, matching the JSON file stem, by default ``"sc2egset_merged"``.
     single_json_dataset_path : Path | str, optional
-        Path to the single-JSON index file for the dataset,
-        by default ``H:/sc2egset_merged/sc2egset_merged.json``.
+        Path to the single-JSON index file for the dataset.
     output_directory : Path | str, optional
         Directory where the cached ``.pt`` file will be written,
         by default ``./data``.
