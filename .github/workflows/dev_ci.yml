@@ -1,56 +1,26 @@
-# This is a basic workflow to help you get started with Actions
-name: continuous integration (ci)
+name: CI
 
-# Controls when the action will run.
 on:
-  # Triggers the workflow on push or pull request events but only for the master branch
   push:
-    branches: [ master, main ]
+    branches: [main, master]
   pull_request:
-    branches: [ master, main ]
-
-  # Allows you to run this workflow manually from the Actions tab
+    branches: [main, master]
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+permissions:
+  contents: read
+
 jobs:
-  # This workflow contains a single job called "test"
-  ci:
-    # The type of runner that the job will run on
-    strategy:
-      matrix:
-        python-versions: ['3.10', '3.11']
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
+  test:
+    runs-on: ubuntu-latest
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v2
-
-      - name: Install poetry
-        uses: snok/install-poetry@v1
-
-      - uses: actions/setup-python@v2
+      - uses: actions/checkout@3d3c42e62734a5c26f53650d5eae3d6f66e7c60c
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
         with:
-          python-version: ${{ matrix.python-versions }}
-
-      - name: Install packages
-        run: poetry install
-
-      - name: Install Tox
-        run: |
-          python -m pip install --upgrade pip
-          pip install tox tox-gh-actions
-
-      # - name: test with tox
-      #   run:
-      #     tox
-
-      # - name: list files
-      #   run: ls -l .
-
-      # - uses: codecov/codecov-action@v1
-      #   with:
-      #     fail_ci_if_error: true
-      #     files: coverage.xml
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --frozen --extra cpu --group dev
+      - run: uv run ruff check .
+      - run: uv run mypy src/latent_trainer/benchmarks src/latent_trainer/models/lightning/lit_guided_vae.py
+      - run: uv run pytest -q
+      - run: uv build
