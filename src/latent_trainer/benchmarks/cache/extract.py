@@ -279,7 +279,7 @@ def _initial_manifest(
     source_indices_fingerprint = None
     if source_indices_path is not None:
         source_indices_fingerprint = _sha256(source_indices_path)
-    root = Path(__file__).resolve().parents[5]
+    root = Path(__file__).resolve().parents[4]
     return CacheManifest(
         cache_schema_version=CACHE_SCHEMA_VERSION,
         extractor_version=EXTRACTOR_VERSION,

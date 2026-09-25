@@ -28,6 +28,7 @@ from latent_trainer.benchmarks.common.splits import (
     indices_from_split_manifest,
 )
 from latent_trainer.benchmarks.data.source import InputFormat
+from latent_trainer.benchmarks.splits.manifest import SplitManifest
 
 
 @dataclass(frozen=True)
@@ -422,5 +423,8 @@ def run_prefix_benchmark(
         "provenance": {
             "software": software_provenance(),
             "cache_fingerprint": cache_fingerprint,
+            "split_fingerprint": SplitManifest.load(split_path).fingerprint()
+            if split_path is not None
+            else None,
         },
     }

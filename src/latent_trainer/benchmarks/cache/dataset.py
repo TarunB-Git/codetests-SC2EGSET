@@ -157,12 +157,15 @@ class PlayerSequenceDataset(Dataset[tuple[torch.Tensor, float]]):
         if target not in {"outcome", "mmr"}:
             raise ValueError("Sequence target must be outcome or MMR")
         self.replay_dataset = replay_dataset
-        self.rows = [
-            (replay_index, slot)
-            for replay_index in replay_indices
-            for slot in range(2)
-            if target != "mmr" or bool(replay_dataset[replay_index]["mmr_valid"][slot])
-        ]
+        self.rows = sorted(
+            (
+                (replay_index, slot)
+                for replay_index in replay_indices
+                for slot in range(2)
+                if target != "mmr"
+                or bool(replay_dataset[replay_index]["mmr_valid"][slot])
+            )
+        )
         self.target = target
 
     def __len__(self) -> int:

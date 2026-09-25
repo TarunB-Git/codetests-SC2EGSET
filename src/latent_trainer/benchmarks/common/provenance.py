@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def software_provenance() -> dict[str, str | None]:
-    root = Path(__file__).resolve().parents[5]
+    root = Path(__file__).resolve().parents[4]
     try:
         commit = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "HEAD"],

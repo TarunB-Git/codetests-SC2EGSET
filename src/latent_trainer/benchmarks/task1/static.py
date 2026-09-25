@@ -97,11 +97,13 @@ def load_sharded_aligned_cache(
                 np.empty((0, 2, len(dataset.manifest.feature_names)), dtype=np.float32),
                 np.empty((0, 2), dtype=int),
             )
-        samples = [dataset[index] for index in indices]
-        return (
-            torch.stack([sample["average"] for sample in samples]).numpy(),
-            torch.stack([sample["outcomes"] for sample in samples]).numpy(),
-        )
+        features = []
+        labels = []
+        for index in sorted(indices):
+            sample = dataset[index]
+            features.append(sample["average"].clone())
+            labels.append(sample["outcomes"].clone())
+        return torch.stack(features).numpy(), torch.stack(labels).numpy()
 
     train_features, train_labels = arrays(partitions["train"])
     validation_features, validation_labels = arrays(partitions["validation"])

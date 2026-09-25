@@ -301,5 +301,8 @@ def run_skill_benchmark(
             "cache_fingerprint": CacheManifest.load(cache_manifest_path).fingerprint()
             if cache_manifest_path is not None
             else None,
+            "split_fingerprint": SplitManifest.load(split_path).fingerprint()
+            if split_path is not None
+            else None,
         },
     }

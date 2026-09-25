@@ -8,7 +8,10 @@ from click.testing import CliRunner
 
 import latent_trainer.benchmarks.cache.extract as extract_module
 from latent_trainer.benchmarks.cache.collate import collate_replays, packed_sequences
-from latent_trainer.benchmarks.cache.dataset import ShardReplayDataset
+from latent_trainer.benchmarks.cache.dataset import (
+    PlayerSequenceDataset,
+    ShardReplayDataset,
+)
 from latent_trainer.benchmarks.cache.extract import extract_cache, validate_cache
 from latent_trainer.benchmarks.cli import main
 from latent_trainer.benchmarks.common.data import (
@@ -192,6 +195,7 @@ def test_cache_shards_loading_audit_and_equivalence(tmp_path: Path):
     dataset = ShardReplayDataset(manifest_path, lru_shards=1)
     assert validated["shards"] == 3
     assert validated["valid_replays"] == 6
+    assert dataset.manifest.package_commit is not None
     assert audit["replay_count"] == 6
     assert len(dataset) == 6
     assert torch.equal(dataset[0]["average"][0], direct[0].average)
@@ -207,6 +211,8 @@ def test_cache_shards_loading_audit_and_equivalence(tmp_path: Path):
     assert batch["sequence"].shape[0] == 4
     assert batch["padding_mask"].shape[:2] == batch["sequence"].shape[:2]
     assert packed_sequences(batch).batch_sizes[0] == 4
+    sequence_dataset = PlayerSequenceDataset(dataset, [4, 1, 5, 0])
+    assert sequence_dataset.rows == sorted(sequence_dataset.rows)
     prefix = ShardReplayDataset(manifest_path, prefix_loop=1)
     assert all(int(loops.max()) <= 1 for loops in prefix[0]["sequence_loops"])
 
@@ -312,6 +318,7 @@ def test_splits_feature_contract_and_guided_vae_adapter(tmp_path: Path):
         split_path=split_path,
     )
     assert task1["models"]["logistic"]["test"]["samples"] > 0
+    assert task1["provenance"]["software"]["git_commit"] is not None
     task1_sequence = run_sequence_benchmark(
         None,
         model_name="gru",
